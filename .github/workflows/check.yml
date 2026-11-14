@@ -3,11 +3,9 @@ name: VPN Gate Node Check
 # 模板仓库默认不配置定时任务：需要自动更新时，把下面的注释替换成你自己的 cron。
 # 注意：GitHub 调度最小间隔约 5 分钟，但通常会延迟几分钟；仓库连续 60 天无提交会让定时任务自动停用。
 #
-# on:
-#   schedule:
-#     - cron: '*/30 * * * *'
-
 on:
+  schedule:
+    - cron: '*/30 * * * *'
   workflow_dispatch:
     inputs:
       max_nodes:
@@ -68,7 +66,9 @@ jobs:
           CHECK_CONCURRENCY: ${{ github.event.inputs.concurrency || '32' }}
           CHECK_TIMEOUT: ${{ github.event.inputs.timeout || '25' }}
           MAX_CHECK_NODES: ${{ github.event.inputs.max_nodes || '0' }}
-          MIN_SUCCESS_RATIO: '0'
+          MIN_SUCCESS_RATIO: '0.2'
+          MAX_DATACENTER_PER_COUNTRY: '0'
+          TARGET_COUNTRIES: 'US,CA,JP,SG,MX,ES,RO,CH,SE,AT,FI'
         run: python vpngate.py
 
       - name: Ensure GitHub Pages is enabled

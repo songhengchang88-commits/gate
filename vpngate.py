@@ -546,13 +546,18 @@ def to_sstp_nodes(rows: Iterable[dict[str, Any]]) -> list[Node]:
         if "." not in host:
             host = f"{host}.opengw.net"
 
+        country_code = (row.get("country_short") or "").strip().upper()
+        target_countries = {c.strip().upper() for c in os.environ.get("TARGET_COUNTRIES", "US,CA,JP,SG,MX,ES,RO,CH,SE,AT,FI").split(",") if c.strip()}
+        if target_countries and country_code not in target_countries:
+            continue
+
         nodes.append(
             Node(
                 host=host,
                 port=port,
                 ip=(row.get("ip") or "").strip(),
                 country=(row.get("country_long") or "").strip(),
-                country_code=(row.get("country_short") or "").strip().upper(),
+                country_code=country_code,
                 ping=row.get("ping"),
                 score=row.get("score"),
             )
@@ -583,7 +588,9 @@ def prioritize(nodes: list[Node]) -> list[Node]:
 # ---------------------------------------------------------------------------
 # 分类（以 Worker 的出口信息为准，缺失时才看 Operator 关键字）
 # ---------------------------------------------------------------------------
-def classify_network(org: str | None, is_datacenter: bool | None) -> str:
+def classify_network(org: str | None, is_datacenter: bool | None, is_vpn: bool | None = None, is_proxy: bool | None = None) -> str:
+    if is_vpn is True or is_proxy is True:
+        return "vpn-flagged"
     if is_datacenter is True:
         return "datacenter"
     if is_datacenter is False:
@@ -644,6 +651,7 @@ def check_one(
         if success and exit_info:
             asn = exit_info.get("asn") or {}
             org = str(asn.get("org") or asn.get("name") or "")
+            is_vpn = bool(exit_info.get("is_vpn") or exit_info.get("is_proxy") or False)
             result["exit"] = {
                 "ip": exit_info.get("ip"),
                 "country": exit_info.get("country"),
@@ -653,8 +661,14 @@ def check_one(
                 "asn": asn.get("asn"),
                 "org": org,
                 "is_datacenter": exit_info.get("is_datacenter"),
+                "is_vpn": is_vpn,
             }
-            result["residential"] = classify_network(org, exit_info.get("is_datacenter"))
+            result["residential"] = classify_network(
+                org,
+                exit_info.get("is_datacenter"),
+                is_vpn=exit_info.get("is_vpn"),
+                is_proxy=exit_info.get("is_proxy"),
+            )
         elif success:
             result["residential"] = "unknown"
         return result
@@ -825,7 +839,9 @@ def build_outputs(
     }
 
 
-def build_nodes_text(data: dict[str, Any], edge_hosts: list[str], cfg: Config) -> str:
+def build_nodes_text(
+    data: dict[str, Any], edge_hosts: list[str], cfg: Config, allowed_countries: set[str] | None = None
+) -> str:
     if not edge_hosts:
         raise ConfigError("优选入口池为空，无法生成 nodes.txt")
     lines: list[str] = []
@@ -836,13 +852,15 @@ def build_nodes_text(data: dict[str, Any], edge_hosts: list[str], cfg: Config) -
         key=lambda kv: (-int(kv[1].get("count") or 0), str(kv[1].get("code") or kv[0])),
     )
     for code, group in ordered:
+        if allowed_countries and code.upper() not in allowed_countries:
+            continue
         name = COUNTRY_ZH.get(code) or group.get("name") or code
         nodes = sorted(
             group["nodes"],
             key=lambda n: (n.get("residential") != "residential", n.get("latency_ms") is None, n.get("latency_ms") or 0),
         )
         residential = [n for n in nodes if n.get("residential") == "residential"]
-        others = [n for n in nodes if n.get("residential") != "residential"]
+        others = [n for n in nodes if n.get("residential") != "residential" and n.get("residential") != "vpn-flagged"]
         chosen = residential[: cfg.max_residential_per_country] + others[: cfg.max_datacenter_per_country]
         counters = {"residential": 0, "datacenter": 0, "unknown": 0}
         for node in chosen:
@@ -892,6 +910,19 @@ def write_outputs(
     atomic_write_text(html_path, html)
     nodes_text = build_nodes_text(data, edge_hosts, cfg)
     atomic_write_text(nodes_path, nodes_text)
+
+    # Tier 1: Muse + Gemini + Polymarket (JP, CA, MX, ES, RO, CH, SE, AT, FI)
+    tier1_countries = {"JP", "CA", "MX", "ES", "RO", "CH", "SE", "AT", "FI"}
+    tier1_path = os.path.join(cfg.public_dir, "nodes-tier1.txt")
+    tier1_text = build_nodes_text(data, edge_hosts, cfg, allowed_countries=tier1_countries)
+    atomic_write_text(tier1_path, tier1_text)
+
+    # Tier 2: Tier 1 + US, SG
+    tier2_countries = tier1_countries | {"US", "SG"}
+    tier2_path = os.path.join(cfg.public_dir, "nodes-tier2.txt")
+    tier2_text = build_nodes_text(data, edge_hosts, cfg, allowed_countries=tier2_countries)
+    atomic_write_text(tier2_path, tier2_text)
+
     return data_path, html_path, nodes_path, nodes_text
 
 
