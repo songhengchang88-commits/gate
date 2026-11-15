@@ -65,7 +65,7 @@ jobs:
           MAX_CHECK_NODES: ${{ github.event.inputs.max_nodes || '0' }}
           MIN_SUCCESS_RATIO: '0.2'
           MAX_DATACENTER_PER_COUNTRY: '0'
-          TARGET_COUNTRIES: 'US,CA,JP,SG,MX,ES,RO,CH,SE,AT,FI'
+          TARGET_COUNTRIES: 'ES,DE,NL,FR,IT,RO,GB,IE,PT,SE,FI,DK,NO,AT,BE,CH,PL,MX,CA'
         run: python vpngate.py
 
       - name: Ensure GitHub Pages is enabled
